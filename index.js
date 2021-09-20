@@ -47,7 +47,7 @@ function parseNode(text) {
 }
 
 function getNodeVars({ path }) {
-  const raw = execSync(`grep "process.env" -R ${path} --include "*.js" | sed 's/:/${DELIMITER}/'`)
+  const raw = execSync(`grep "process.env" -R --exclude-dir "node_modules" ${path} --include "*.js" | sed 's/:/${DELIMITER}/'`)
     .toString()
     .trim()
   const items = raw.split('\n').map((i) => i.split(DELIMITER).filter((v) => v)).filter((v) => v.length > 0)
