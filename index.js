@@ -222,7 +222,9 @@ function output({ serverless, allVars, strict, verbose }) {
         process.exit(1)
       }
     }
-  } else if (verbose) {
+  }
+
+  if (verbose) {
     if (Object.keys(allVars).length) {
       console.log(allVars)
     } else {
