@@ -1,6 +1,7 @@
 {
   "name": "@eqworks/scan-env",
-  "version": "0.1.0",
+  "version": "0.2.0-alpha.0",
+  "description": "Utility to scan environment variable usage.",
   "main": "index.js",
   "license": "MIT",
   "files": [

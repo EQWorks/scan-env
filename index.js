@@ -4,17 +4,6 @@ const { execSync } = require('child_process')
 const yaml = require('yaml')
 const chalk = require('chalk')
 
-// const lib = require('./lib')
-// module.exports.deployment = (params) => {
-//   const { success = true, status, stage = 'dev', project, commit } = params
-//   const projLink = `https://github.com/${project}${commit ? `/commit/${commit}` : ''}`
-//   const extra = { footer: `<${projLink}|${project}${commit ? `#${commit}` : ''}>` }
-//   if (!status) {
-//     extra.color = success ? 'good' : 'danger'
-//   }
-//   const title = `${project} (${stage}) deployment: ${status ? status : (success ? 'succeeded' : 'failed')}`
-//   return send(extra)({ ...params, title })
-// }
 const DELIMITER = '::\t'
 
 // from https://github.com/beenotung/gen-env
@@ -30,14 +19,18 @@ const NODE_REGEX = [
   // some gulp files like to shortcut with `const env = process.env`
   /{(.*)}\s*=\s*env/i,
 ]
+
 function parseNode(text) {
+  if (text.startsWith('//') || text.startsWith('/*')) {
+    return { vars: [] }
+  }
   for (const regex of NODE_REGEX) {
     const match = text.match(regex)
     if (match) {
       const vars = new Set()
       const defaults = new Set()
       match[1].split(',').map((v) => {
-        const [k, d] = v.split('=')
+        const [k, d] = v.split('=').map((s) => s.trim())
         const _var = k.split(':')[0].trim()
         vars.add(_var)
         if (d) {
@@ -50,9 +43,20 @@ function parseNode(text) {
       }
     }
   }
-  return {
-    vars: [],
-  }
+  return { vars: [] }
+}
+
+function getNodeVars({ path }) {
+  const raw = execSync(`grep "process.env" -R ${path} --include "*.js" | sed 's/:/${DELIMITER}/'`)
+    .toString()
+    .trim()
+  const items = raw.split('\n').map((i) => i.split(DELIMITER).filter((v) => v)).filter((v) => v.length > 0)
+  return items.map(([k, v]) => [k, parseNode(v.trim())]).reduce((acc, [fp, { vars, defaults }]) => {
+    acc[fp] = acc[fp] || { vars, defaults }
+    acc[fp].vars = Array.from(new Set(acc[fp].vars.concat(vars))).filter((d) => d)
+    acc[fp].defaults = Array.from(new Set((acc[fp].defaults || []).concat(defaults))).filter((d) => d)
+    return acc
+  }, {})
 }
 
 function buildVarDict(allVars) {
@@ -92,18 +96,41 @@ function formatWarning({ serverless, missing, allVars, strict = false }) {
   return s
 }
 
+function output({ serverless, allVars, strict, verbose }) {
+  if (serverless) {
+    const ymlRaw = execSync(`cat ${serverless}`).toString().trim()
+    const yml = yaml.parse(ymlRaw)
+    const slsEnvs = seekSLS(yml)
+    const missing = {}
+    const dict = buildVarDict(allVars)
+    Object.entries(dict).forEach(([v, fps]) => {
+      if (!slsEnvs.has(v)) {
+        missing[v] = fps
+      }
+    })
+    if (Object.keys(missing).length) {
+      console.warn(`${formatWarning({ serverless, missing, allVars, strict })}`)
+      if (strict) {
+        process.exit(1)
+      }
+    }
+  } else if (verbose) {
+    console.log(allVars)
+  }
+}
+
 if (require.main === module) {
   require('yargs')
   .usage('Usage: $0 <command> [options]')
   .command(
     'node',
-    'Scan node.js (or compatible) projects with process.env usage',
+    'Scan Node.js (or compatible) projects with process.env usage',
     yargs => yargs
       .option('path', {
         type: 'string',
         alias: 'p',
         describe: 'Path to scan',
-        default: '.',
+        default: process.cwd(),
       })
       .option('serverless', {
         type: 'string',
@@ -122,40 +149,19 @@ if (require.main === module) {
         default: false,
       })
     ,
-    ({ path, serverless, strict, verbose }) => {
-      const raw = execSync(`grep "process.env" -R ${path} --include "*.js" | sed 's/:/${DELIMITER}/'`)
-        .toString()
-        .trim()
-      const items = raw.split('\n').map((i) => i.split(DELIMITER))
-      const allVars = items.map(([k, v]) => [k, parseNode(v)]).reduce((acc, [fp, { vars, defaults }]) => {
-        acc[fp] = acc[fp] || { vars, defaults }
-        acc[fp].vars = Array.from(new Set(acc[fp].vars.concat(vars)))
-        acc[fp].defaults = Array.from(new Set(acc[fp].defaults.concat(defaults)))
-        return acc
-      }, {})
-      // obtain from serverless yaml
-      if (serverless) {
-        const ymlRaw = execSync(`cat ${serverless}`).toString().trim()
-        const yml = yaml.parse(ymlRaw)
-        const slsEnvs = seekSLS(yml)
-        const missing = {}
-        const dict = buildVarDict(allVars)
-        Object.entries(dict).forEach(([v, fps]) => {
-          if (!slsEnvs.has(v)) {
-            missing[v] = fps
-          }
-        })
-        if (Object.keys(missing).length) {
-          console.warn(`${formatWarning({ serverless, missing, allVars, strict })}`)
-        }
-      } else if (verbose) {
-        console.log(allVars)
-      }
+    (props) => {
+      const allVars = getNodeVars(props)
+      output({ ...props, allVars })
     },
   )
+  // .command(
+  //   'python',
+  //   'Scan Python projects with environment variable usage',
+  //   // grep "os.getenv" -R overseer --include "*.py"
+  // )
   .demandCommand()
   .help()
   .argv
 } else {
-  // module.exports = lib
+  // TODO: expose core lib?
 }
