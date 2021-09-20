@@ -1,10 +1,32 @@
 #!/usr/bin/env node
 const { execSync } = require('child_process')
+const { existsSync } = require('fs')
+const { join } = require('path')
 
 const yaml = require('yaml')
 const chalk = require('chalk')
 
 const DELIMITER = '::\t'
+
+function detectSLSConfig(props) {
+  if (props.serverless === '') {
+    const paths = Array.from(new Set([props.path, process.cwd()])).map((p) => [
+      'serverless.yml',
+      'serverless.yaml',
+      'sls.yml',
+      'sls.yaml',
+    ].map((f) => join(p, f))).flat()
+    for (const p of paths) {
+      if (existsSync(p)) {
+        props.serverless = p
+        break
+      }
+    }
+    if (props.verbose) {
+      console.warn(chalk.yellow('No serverless configuration found'))
+    }
+  }
+}
 
 // from https://github.com/beenotung/gen-env
 const NODE_REGEX = [
@@ -50,13 +72,17 @@ function getNodeVars({ path }) {
   const raw = execSync(`grep "process.env" -R --exclude-dir "node_modules" ${path} --include "*.js" | sed 's/:/${DELIMITER}/'`)
     .toString()
     .trim()
-  const items = raw.split('\n').map((i) => i.split(DELIMITER).filter((v) => v)).filter((v) => v.length > 0)
-  return items.map(([k, v]) => [k, parseNode(v.trim())]).reduce((acc, [fp, { vars, defaults }]) => {
-    acc[fp] = acc[fp] || { vars, defaults }
-    acc[fp].vars = Array.from(new Set(acc[fp].vars.concat(vars))).filter((d) => d)
-    acc[fp].defaults = Array.from(new Set((acc[fp].defaults || []).concat(defaults))).filter((d) => d)
-    return acc
-  }, {})
+  const items = raw.split('\n')
+    .map((i) => i.split(DELIMITER).filter((v) => v))
+    .filter((v) => v.length > 0)
+  return items.map(([k, v]) => [k, parseNode(v.trim())])
+    .filter(([, { vars }]) => vars.length > 0)
+    .reduce((acc, [fp, { vars, defaults }]) => {
+      acc[fp] = acc[fp] || { vars, defaults }
+      acc[fp].vars = Array.from(new Set(acc[fp].vars.concat(vars))).filter((d) => d)
+      acc[fp].defaults = Array.from(new Set((acc[fp].defaults || []).concat(defaults))).filter((d) => d)
+      return acc
+    }, {})
 }
 
 function buildVarDict(allVars) {
@@ -115,7 +141,11 @@ function output({ serverless, allVars, strict, verbose }) {
       }
     }
   } else if (verbose) {
-    console.log(allVars)
+    if (Object.keys(allVars).length) {
+      console.log(allVars)
+    } else {
+      console.warn(chalk.yellow('No env vars detected'))
+    }
   }
 }
 
@@ -135,7 +165,7 @@ if (require.main === module) {
       .option('serverless', {
         type: 'string',
         alias: 'sls',
-        describe: 'Specify a serverless configuration YAML file',
+        describe: 'Specify a serverless configuration YAML file; leave empty to auto detect',
       })
       .option('strict', {
         type: 'boolean',
@@ -150,6 +180,7 @@ if (require.main === module) {
       })
     ,
     (props) => {
+      detectSLSConfig(props) // mutates props.serverless
       const allVars = getNodeVars(props)
       output({ ...props, allVars })
     },
