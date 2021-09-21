@@ -8,47 +8,24 @@ const chalk = require('chalk')
 
 const DELIMITER = '::\t'
 
-function addOpts(yargs) {
-  return yargs
-    .option('path', {
-      type: 'string',
-      alias: 'p',
-      describe: 'Path to scan',
-      default: process.cwd(),
-    })
-    .option('serverless', {
-      type: 'string',
-      alias: 'sls',
-      describe: 'Specify a serverless configuration YAML file; leave empty to auto detect',
-    })
-    .option('strict', {
-      type: 'boolean',
-      describe: 'Strict mode, reporting missing even if there are default fallback values',
-      default: false,
-    })
-    .option('verbose', {
-      type: 'boolean',
-      alias: 'v',
-      describe: 'Show verbose output',
-      default: false,
-    })
-}
-
-function detectSLSConfig(props) {
-  if (props.serverless === '') {
-    const paths = Array.from(new Set([props.path, process.cwd()])).map((p) => [
+function detectSLSConfig(argv) {
+  if (argv.serverless === '') {
+    const paths = [
       'serverless.yml',
       'serverless.yaml',
       'sls.yml',
       'sls.yaml',
-    ].map((f) => join(p, f))).flat()
+    ].map((f) => join(process.cwd(), f))
     for (const p of paths) {
       if (existsSync(p)) {
-        props.serverless = p
+        argv.serverless = p
+        if (argv.verbose) {
+          console.log(chalk.blue(`Detected serverless config: ${chalk.bold(p)}`))
+        }
         break
       }
     }
-    if (props.verbose) {
+    if (argv.verbose && !argv.serverless) {
       console.warn(chalk.yellow('No serverless configuration found'))
     }
   }
@@ -68,8 +45,8 @@ const NODE_REGEX = [
   /{(.*)}\s*=\s*env/i,
 ]
 
-function parseNode(text) {
-  if (text.startsWith('//') || text.startsWith('/*') || text.endsWith('<ignore scan-env>')) {
+function jsParser(text) {
+  if (text.startsWith('//') || text.startsWith('/*')) {
     return { vars: [] }
   }
   for (const regex of NODE_REGEX) {
@@ -94,64 +71,53 @@ function parseNode(text) {
   return { vars: [] }
 }
 
-function getNodeVars({ path }) {
-  const raw = execSync(`grep "process.env" -R --exclude-dir "node_modules" ${path} --include "*.js" | sed 's/:/${DELIMITER}/'`)
-    .toString()
-    .trim()
-  const items = raw.split('\n')
-    .map((i) => i.split(DELIMITER).filter((v) => v))
-    .filter((v) => v.length > 0)
-  return items.map(([k, v]) => [k, parseNode(v.trim())])
-    .filter(([, { vars }]) => vars.length > 0)
-    .reduce((acc, [fp, { vars, defaults }]) => {
-      acc[fp] = acc[fp] || { vars, defaults }
-      acc[fp].vars = Array.from(new Set(acc[fp].vars.concat(vars))).filter((d) => d)
-      acc[fp].defaults = Array.from(new Set((acc[fp].defaults || []).concat(defaults))).filter((d) => d)
-      return acc
-    }, {})
-}
+const PYTHON_REGEX = new RegExp(/(environ\.get|getenvb?)\(('|")(?<env>\w+)('|")(,('|")?(?<fallback>[^)]*)('|")?)?\)/g)
 
-const PYTHON_REGEX = [
-  // matches:
-  //    environ.get
-  //    getenv
-  //    getenvb
-  /(environ\.get|getenvb?)\((\'|\")(?<env>\w+)(\'|\")(,(\'|\")?(?<fallback>[^)]*)(\'|\")?)?\)/g
-]
-
-function parsePython(text) {
-  if (text.startsWith('#') || text.endsWith('<ignore scan-env>')) {
+function pyParser(text) {
+  if (text.startsWith('#')) {
     return { vars: [] }
   }
-  for (const regex of PYTHON_REGEX) {
-    const matches = text.matchAll(regex)
-    for (const match of matches) {
-      const vars = new Set()
-      const defaults = new Set()
-      const { env, fallback } = match.groups
-      vars.add(env)
-      if (fallback) {
-        defaults.add(env)
-      }
-      return {
-        vars: Array.from(vars),
-        defaults: Array.from(defaults),
-      }
+  const matches = text.matchAll(PYTHON_REGEX)
+  for (const match of matches) {
+    const vars = new Set()
+    const defaults = new Set()
+    const { env, fallback } = match.groups
+    vars.add(env)
+    if (fallback) {
+      defaults.add(env)
+    }
+    return {
+      vars: Array.from(vars),
+      defaults: Array.from(defaults),
     }
   }
   return { vars: [] }
 }
 
-function getPythonVars({ path }) {
-  const raw = execSync(`grep "getenv" -R ${path} --include "*.py" | sed 's/:/${DELIMITER}/'`)
-    .toString()
-    .trim()
-  const items = raw.split('\n')
-    .map((i) => i.split(DELIMITER).filter((v) => v))
-    .filter((v) => v.length > 0)
-  return items.map(([k, v]) => [k, parsePython(v.trim())])
-    .filter(([, { vars }]) => vars.length > 0)
-    .reduce((acc, [fp, { vars, defaults }]) => {
+const EXTS = {
+  '.js': { parser: jsParser },
+  '.mjs': { parser: jsParser },
+  '.py': { parser: pyParser },
+}
+
+function parser(item) {
+  const [fp, text] = item.split(DELIMITER).map((s) => s.trim())
+  if (text.endsWith('<ignore scan-env>')) {
+    return { fp, vars: [] }
+  }
+  for (const ext in EXTS) {
+    if (fp.endsWith(ext)) {
+      return { fp, ...EXTS[ext].parser(text) }
+    }
+  }
+  return { fp, vars: [] }
+}
+
+function getVars(raw) {
+  const items = raw.split('\n').filter((v) => v.length > 0)
+  return items.map(parser)
+    .filter(({ vars }) => vars.length > 0)
+    .reduce((acc, { fp, vars, defaults }) => {
       acc[fp] = acc[fp] || { vars, defaults }
       acc[fp].vars = Array.from(new Set(acc[fp].vars.concat(vars))).filter((d) => d)
       acc[fp].defaults = Array.from(new Set((acc[fp].defaults || []).concat(defaults))).filter((d) => d)
@@ -199,17 +165,46 @@ function formatWarning({ serverless, missing, allVars, strict = false }) {
     }
   })
   if (s) {
-    return `${chalk.red(`Missing environment variables in ${chalk.bold(serverless)}:\n`)}${s}`
+    return `${chalk.red(`Missing env vars in ${chalk.bold(serverless)}:\n`)}${s}`
+  }
+  return s
+}
+
+function formatAll({ dict, verbose }) {
+  const counts = { vars: 0, files: 0 }
+  let maxWidth = 0
+  const _dict = Object.entries(dict).reduce((acc, [k, fps]) => {
+    acc[k] = Array.from(fps)
+    counts.vars += 1
+    counts.files += fps.size
+    maxWidth = Math.max(maxWidth, k.length)
+    return acc
+  }, {})
+  let s = `${chalk.blue(`${chalk.bold(counts.vars)} env vars found in ${chalk.bold(counts.files)} files`)}`
+  if (verbose) {
+    s += `\n`
+    Object.entries(_dict).forEach(([k, fps]) => {
+      const withSpaces = chalk.blue(k) + ' '.repeat(1 + (maxWidth - k.length))
+      s += withSpaces
+      fps.forEach((fp, i) => {
+        if (!i) {
+          s += fp
+        } else {
+          s += fp.padStart(withSpaces.length + fp.length - 10)
+        }
+        s += '\n'
+      })
+    })
   }
   return s
 }
 
 function output({ serverless, allVars, strict, verbose }) {
+  const dict = buildVarDict(allVars)
   if (serverless) {
     const yml = yaml.load(readFileSync(serverless), 'utf8')
     const slsEnvs = new Set(seekSLSEnvs(yml))
     const missing = {}
-    const dict = buildVarDict(allVars)
     Object.entries(dict).forEach(([v, fps]) => {
       if (!slsEnvs.has(v)) {
         missing[v] = fps
@@ -219,14 +214,15 @@ function output({ serverless, allVars, strict, verbose }) {
       const warning = formatWarning({ serverless, missing, allVars, strict })
       if (warning) {
         console[strict ? 'error' : 'warn'](warning)
-        process.exit(1)
+        if (strict) {
+          process.exit(1)
+        }
       }
     }
   }
-
   if (verbose) {
-    if (Object.keys(allVars).length) {
-      console.log(allVars)
+    if (Object.keys(dict).length) {
+      console.log(formatAll({ dict, verbose }))
     } else {
       console.warn(chalk.yellow('No env vars detected'))
     }
@@ -234,31 +230,31 @@ function output({ serverless, allVars, strict, verbose }) {
 }
 
 if (require.main === module) {
-  require('yargs')
-  .usage('Usage: $0 <command> [options]')
-  .command(
-    'node',
-    'Scan Node.js (or compatible) projects with process.env usage',
-    addOpts,
-    (props) => {
-      detectSLSConfig(props) // mutates props.serverless
-      const allVars = getNodeVars(props)
-      output({ ...props, allVars })
+  const { argv } = require('yargs')(process.argv.slice(2)).options({
+    serverless: {
+      type: 'string',
+      alias: 'sls',
+      describe: 'Specify a serverless configuration YAML file; leave empty to auto detect',
     },
-  )
-  .command(
-    'python',
-    'Scan Python projects with environment variable usage',
-    addOpts,
-    (props) => {
-      detectSLSConfig(props)
-      const allVars = getPythonVars(props)
-      output({ ...props, allVars })
-    }
-  )
-  .demandCommand()
-  .help()
-  .argv
+    strict: {
+      type: 'boolean',
+      describe: 'Strict mode, reporting missing even if there are default fallback values',
+      default: false,
+    },
+    verbose: {
+      type: 'boolean',
+      alias: 'v',
+      describe: 'Show verbose output',
+      default: false,
+    },
+  })
+  detectSLSConfig(argv)
+  const patterns = '"process.env|getenv|environ"'
+  const includes = Object.keys(EXTS).map((ext) => `--include "*${ext}"`).join(' ')
+  const cmd = `git ls-files | xargs grep -E ${patterns} ${includes} | sed 's/:/${DELIMITER}/'`
+  const raw = execSync(cmd).toString().trim()
+  const allVars = getVars(raw)
+  output({ ...argv, allVars })
 } else {
   // TODO: expose core lib?
 }
