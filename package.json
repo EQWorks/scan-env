@@ -1,6 +1,6 @@
 {
   "name": "@eqworks/scan-env",
-  "version": "0.2.0-alpha.1",
+  "version": "0.3.0-alpha.0",
   "description": "Utility to scan environment variable usage.",
   "main": "index.js",
   "license": "MIT",
@@ -10,7 +10,7 @@
     "README.md"
   ],
   "scripts": {
-    "lint": "eslint ."
+    "lint": "eslint *.js"
   },
   "bin": {
     "scan-env": "./index.js"

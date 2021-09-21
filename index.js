@@ -9,7 +9,7 @@ const chalk = require('chalk')
 const DELIMITER = '::\t'
 
 function detectSLSConfig(argv) {
-  if (argv.serverless === '') {
+  if (!argv.serverless) {
     const paths = [
       'serverless.yml',
       'serverless.yaml',
@@ -19,9 +19,6 @@ function detectSLSConfig(argv) {
     for (const p of paths) {
       if (existsSync(p)) {
         argv.serverless = p
-        if (argv.verbose) {
-          console.log(chalk.blue(`Detected serverless config: ${chalk.bold(p)}`))
-        }
         break
       }
     }
@@ -31,18 +28,11 @@ function detectSLSConfig(argv) {
   }
 }
 
-// from https://github.com/beenotung/gen-env
 const NODE_REGEX = [
-  // e.g. process.env['REACT_APP_API_SERVER']
-  /env\['(\w*)'\]/i,
-  // e.g. process.env["REACT_APP_API_SERVER"]
-  /env\["(\w*)"\]/i,
-  // e.g. process.env.REACT_APP_API_SERVER
-  /env\.(\w*)/i,
-  // e.g. const { REACT_APP_API_SERVER, NODE_ENV } = process.env
-  /{(.*)}\s*=\s*process.env/i,
-  // some gulp files like to shortcut with `const env = process.env`
-  /{(.*)}\s*=\s*env/i,
+  // env['key'] or env.prop with `||` default support
+  /env(\[["|'](?<key>\w*)["|']\]|\.(?<prop>\w*))(?<def>\s*\|\|)?/g,
+  // destructuring such as { dict } = process.env
+  /{(?<dict>.*)}\s*=\s*process.env/g,
 ]
 
 function jsParser(text) {
@@ -50,18 +40,26 @@ function jsParser(text) {
     return { vars: [] }
   }
   for (const regex of NODE_REGEX) {
-    const match = text.match(regex)
-    if (match) {
+    const matches = text.matchAll(regex)
+    for (const match of matches) {
       const vars = new Set()
       const defaults = new Set()
-      match[1].split(',').map((v) => {
-        const [k, d] = v.split('=').map((s) => s.trim())
-        const _var = k.split(':')[0].trim()
-        vars.add(_var)
-        if (d) {
-          defaults.add(_var)
+      const { key, prop, def, dict } = match.groups
+      if (dict) { // destructuring case
+        dict.split(',').forEach((v) => {
+          const [k, d] = v.split('=').map((s) => s.trim())
+          const _var = k.split(':')[0].trim()
+          vars.add(_var)
+          if (d) {
+            defaults.add(_var)
+          }
+        })
+      } else if (key || prop) {
+        vars.add(key || prop)
+        if (def) {
+          defaults.add(def)
         }
-      })
+      }
       return {
         vars: Array.from(vars),
         defaults: Array.from(defaults),
@@ -71,6 +69,7 @@ function jsParser(text) {
   return { vars: [] }
 }
 
+// handles environ.get, getenv, getenvb, with default/fallback support (not through `or`)
 const PYTHON_REGEX = new RegExp(/(environ\.get|getenvb?)\(('|")(?<env>\w+)('|")(,('|")?(?<fallback>[^)]*)('|")?)?\)/g)
 
 function pyParser(text) {
@@ -148,26 +147,33 @@ function seekSLSEnvs(yml) {
   return vars
 }
 
-function formatWarning({ serverless, missing, allVars, strict = false }) {
+function formatWarning({ serverless, missing, allVars }) {
   let s = ''
+  let totalDefs = 0
+  let total = 0
   Object.entries(missing).forEach(([v, fps]) => {
+    let defs = 0
     const _fps = Array.from(fps).map((fp) => {
+      total += 1
       if (allVars[fp].defaults.includes(v)) {
-        if (strict) {
-          return chalk.yellow(`${fp} (has default)`)
-        }
-        return null
+        defs += 1
+        return `${fp} ${chalk.yellow('(has default)')}`
       }
-      return chalk.red(fp)
+      return fp
     }).filter((s) => s)
+    totalDefs += defs
     if (_fps.length) {
-      s += `\n${chalk.red.bold(v)}:\n\t${_fps.join('\n\t')}\n`
+      s += `\n${chalk[_fps.length === defs ? 'yellow' : 'red'].bold(v)}:\n\t${_fps.join('\n\t')}\n`
     }
   })
   if (s) {
-    return `${chalk.red(`Missing env vars in ${chalk.bold(serverless)}:\n`)}${s}`
+    const allDef = totalDefs === total
+    return {
+      warning: `${chalk[allDef ? 'yellow' : 'red'](`Missing env vars in ${chalk.bold(serverless)}:\n`)}${s}`,
+      allDef,
+    }
   }
-  return s
+  return {}
 }
 
 function formatAll({ dict, verbose }) {
@@ -211,10 +217,10 @@ function output({ serverless, allVars, strict, verbose }) {
       }
     })
     if (Object.keys(missing).length) {
-      const warning = formatWarning({ serverless, missing, allVars, strict })
+      const { warning, allDef } = formatWarning({ serverless, missing, allVars })
       if (warning) {
         console[strict ? 'error' : 'warn'](warning)
-        if (strict) {
+        if (strict && !allDef) {
           process.exit(1)
         }
       }
@@ -230,24 +236,26 @@ function output({ serverless, allVars, strict, verbose }) {
 }
 
 if (require.main === module) {
-  const { argv } = require('yargs')(process.argv.slice(2)).options({
-    serverless: {
-      type: 'string',
-      alias: 'sls',
-      describe: 'Specify a serverless configuration YAML file; leave empty to auto detect',
-    },
-    strict: {
-      type: 'boolean',
-      describe: 'Strict mode, reporting missing even if there are default fallback values',
-      default: false,
-    },
-    verbose: {
-      type: 'boolean',
-      alias: 'v',
-      describe: 'Show verbose output',
-      default: false,
-    },
-  })
+  const { argv } = require('yargs')(process.argv.slice(2))
+    .options({
+      serverless: {
+        type: 'string',
+        alias: 'sls',
+        describe: 'Specify a serverless configuration YAML file; otherwise auto detect',
+      },
+      strict: {
+        type: 'boolean',
+        alias: 's',
+        describe: 'Strict mode, exit with 1 if there are missing env vars',
+        default: false,
+      },
+      verbose: {
+        type: 'boolean',
+        alias: 'v',
+        describe: 'Show verbose output',
+        default: false,
+      },
+    })
   detectSLSConfig(argv)
   const patterns = '"process.env|getenv|environ"'
   const includes = Object.keys(EXTS).map((ext) => `--include "*${ext}"`).join(' ')
