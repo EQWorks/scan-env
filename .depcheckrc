@@ -1,0 +1,2 @@
+ignore-dirs: ["node_modules"]
+ignores: ["eslint", "eslint-*"]
