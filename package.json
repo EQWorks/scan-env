@@ -9,6 +9,9 @@
     "LICENSE",
     "README.md"
   ],
+  "scripts": {
+    "lint": "eslint ."
+  },
   "bin": {
     "scan-env": "./index.js"
   },
@@ -16,5 +19,8 @@
     "chalk": "^4.1.2",
     "js-yaml": "^4.1.0",
     "yargs": "^17.1.1"
+  },
+  "devDependencies": {
+    "eslint": "^7.32.0"
   }
 }
