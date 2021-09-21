@@ -246,7 +246,7 @@ if (require.main === module) {
       strict: {
         type: 'boolean',
         alias: 's',
-        describe: 'Strict mode, exit with 1 if there are missing env vars with non-default values',
+        describe: 'Strict mode, exit with 1 if there are missing env vars without default values',
         default: false,
       },
       verbose: {
