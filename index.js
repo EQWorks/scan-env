@@ -57,7 +57,7 @@ function jsParser(text) {
       } else if (key || prop) {
         vars.add(key || prop)
         if (def) {
-          defaults.add(def)
+          defaults.add(key || prop)
         }
       }
       return {
