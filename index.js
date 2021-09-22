@@ -22,9 +22,6 @@ function detectSLSConfig(argv) {
         break
       }
     }
-    if (argv.verbose && !argv.serverless) {
-      console.warn(chalk.yellow('No serverless configuration found'))
-    }
   }
 }
 
@@ -32,7 +29,7 @@ const NODE_REGEX = [
   // env['key'] or env.prop with `||` default support
   /env(\[["|'](?<key>\w*)["|']\]|\.(?<prop>\w*))(?<def>\s*\|\|)?/g,
   // destructuring such as { dict } = process.env
-  /{(?<dict>(?:[^}]+)*)}\s*=\s*process.env/g,
+  /{(?<dict>(?:[^}]{1})*)}\s*=\s*process.env/g, // TODO: this regex chokes on string with chalk usage
 ]
 
 function jsParser(text) {
@@ -124,7 +121,7 @@ function getVars(raw) {
     }, {})
 }
 
-function buildVarDict(allVars) {
+function buildNeeded(allVars) {
   return Object.entries(allVars).reduce((acc, [fp, { vars }]) => {
     vars.forEach((v) => {
       acc[v] = new Set(acc[v] || [])
@@ -147,8 +144,8 @@ function seekSLSEnvs(yml) {
   return vars
 }
 
-function formatWarning({ serverless, missing, allVars }) {
-  let s = ''
+function formatWarning({ missing, allVars }) {
+  let warning = ''
   let totalDefs = 0
   let total = 0
   Object.entries(missing).forEach(([v, fps]) => {
@@ -163,23 +160,16 @@ function formatWarning({ serverless, missing, allVars }) {
     }).filter((s) => s)
     totalDefs += defs
     if (_fps.length) {
-      s += `\n${chalk[_fps.length === defs ? 'yellow' : 'red'].bold(v)}:\n\t${_fps.join('\n\t')}\n`
+      warning += `${chalk[_fps.length === defs ? 'yellow' : 'red'].bold(v)}:\n\t${_fps.join('\n\t')}\n`
     }
   })
-  if (s) {
-    const allDef = totalDefs === total
-    return {
-      warning: `${chalk[allDef ? 'yellow' : 'red'](`Missing env vars in ${chalk.bold(serverless)}:\n`)}${s}`,
-      allDef,
-    }
-  }
-  return {}
+  return { warning, allDef: totalDefs === total }
 }
 
-function formatAll({ dict, verbose }) {
+function formatAll({ needed, verbose }) {
   const counts = { vars: 0, files: 0 }
   let maxWidth = 0
-  const _dict = Object.entries(dict).reduce((acc, [k, fps]) => {
+  const _needed = Object.entries(needed).reduce((acc, [k, fps]) => {
     acc[k] = Array.from(fps)
     counts.vars += 1
     counts.files += fps.size
@@ -189,7 +179,7 @@ function formatAll({ dict, verbose }) {
   let s = `${chalk.blue(`${chalk.bold(counts.vars)} env vars found in ${chalk.bold(counts.files)} files`)}`
   if (verbose) {
     s += `\n`
-    Object.entries(_dict).forEach(([k, fps]) => {
+    Object.entries(_needed).forEach(([k, fps]) => {
       const withSpaces = chalk.blue(k) + ' '.repeat(1 + (maxWidth - k.length))
       s += withSpaces
       fps.forEach((fp, i) => {
@@ -205,30 +195,39 @@ function formatAll({ dict, verbose }) {
   return s
 }
 
-function output({ serverless, allVars, strict, verbose }) {
-  const dict = buildVarDict(allVars)
+function buildMissing({ needed, available }) {
+  const missing = {}
+  Object.entries(needed).forEach(([v, fps]) => {
+    if (!available.has(v)) {
+      missing[v] = fps
+    }
+  })
+  return missing
+}
+
+function output({ serverless, live, allVars, strict, verbose }) {
+  const needed = buildNeeded(allVars)
+  let available = new Set()
   if (serverless) {
     const yml = yaml.load(readFileSync(serverless), 'utf8')
-    const slsEnvs = new Set(seekSLSEnvs(yml))
-    const missing = {}
-    Object.entries(dict).forEach(([v, fps]) => {
-      if (!slsEnvs.has(v)) {
-        missing[v] = fps
-      }
-    })
-    if (Object.keys(missing).length) {
-      const { warning, allDef } = formatWarning({ serverless, missing, allVars })
-      if (warning) {
-        console[strict ? 'error' : 'warn'](warning)
-        if (strict && !allDef) {
-          process.exit(1)
-        }
+    available = new Set(seekSLSEnvs(yml))
+  } else if (live) {
+    available = new Set(Object.keys(process.env))
+  }
+  const missing = buildMissing({ needed, available })
+  if (Object.keys(missing).length) {
+    const { warning, allDef } = formatWarning({ serverless, missing, allVars })
+    if (warning) {
+      const prefix = chalk.yellow(`Missing in ${chalk.bold(serverless || 'live context')}`)
+      console[strict ? 'error' : 'warn'](`${prefix}\n\n${warning}`)
+      if (strict && !allDef) {
+        process.exit(1)
       }
     }
   }
   if (verbose) {
-    if (Object.keys(dict).length) {
-      console.log(formatAll({ dict, verbose }))
+    if (Object.keys(needed).length) {
+      console.log(formatAll({ needed, verbose }))
     } else {
       console.warn(chalk.yellow('No env vars detected'))
     }
@@ -242,6 +241,11 @@ if (require.main === module) {
         type: 'string',
         alias: 'sls',
         describe: 'Specify a serverless configuration YAML file; otherwise auto detect',
+      },
+      live: {
+        type: 'boolean',
+        alias: 'l',
+        describe: 'Perform "live" test against the available env vars exposed to the app layer. Ignored when a serverless config is found',
       },
       strict: {
         type: 'boolean',
@@ -257,12 +261,21 @@ if (require.main === module) {
       },
     })
   detectSLSConfig(argv)
-  const patterns = '"process.env|getenv|environ"'
+  const patterns = "'process.env|getenv|environ'"
   const includes = Object.keys(EXTS).map((ext) => `--include "*${ext}"`).join(' ')
   const cmd = `git ls-files | xargs grep -E ${patterns} ${includes} | sed 's/:/${DELIMITER}/'`
   const raw = execSync(cmd).toString().trim()
   const allVars = getVars(raw)
   output({ ...argv, allVars })
 } else {
-  // TODO: expose core lib?
+  module.exports = {
+    detectSLSConfig,
+    seekSLSEnvs,
+    jsParser,
+    pyParser,
+    parser,
+    getVars,
+    buildMissing,
+    buildNeeded,
+  }
 }
