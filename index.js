@@ -32,7 +32,7 @@ const NODE_REGEX = [
   // env['key'] or env.prop with `||` default support
   /env(\[["|'](?<key>\w*)["|']\]|\.(?<prop>\w*))(?<def>\s*\|\|)?/g,
   // destructuring such as { dict } = process.env
-  /{(?<dict>.*)}\s*=\s*process.env/g,
+  /{(?<dict>(?:[^}]+)*)}\s*=\s*process.env/g,
 ]
 
 function jsParser(text) {
@@ -46,7 +46,7 @@ function jsParser(text) {
       const defaults = new Set()
       const { key, prop, def, dict } = match.groups
       if (dict) { // destructuring case
-        dict.split(',').forEach((v) => {
+        dict.split(',').map((v) => v.trim()).filter((v) => v).forEach((v) => {
           const [k, d] = v.split('=').map((s) => s.trim())
           const _var = k.split(':')[0].trim()
           vars.add(_var)
