@@ -6,15 +6,6 @@ Utility to scan environment variable usage in a git repository. If a serverless 
 
 ```shell
 % npx @eqworks/scan-env --help
-Options:
-      --help               Show help                                   [boolean]
-      --version            Show version number                         [boolean]
-      --serverless, --sls  Specify a serverless configuration YAML file;
-                           otherwise auto detect                        [string]
-  -s, --strict             Strict mode, exit with 1 if there are missing env
-                           vars without default values
-                                                      [boolean] [default: false]
-  -v, --verbose            Show verbose output        [boolean] [default: false]
 ```
 
 You can also install it and invoke the CLI without the scope:
@@ -22,7 +13,6 @@ You can also install it and invoke the CLI without the scope:
 ```shell
 % npm i @eqworks/scan-env # or yarn add @eqworks/scan-env
 % scan-env --help
-...
 ```
 
 ### Strict mode
@@ -55,6 +45,25 @@ PGAPPNAME:
 
 % echo $?
 1
+```
+
+### Live mode (since `v0.4.0`)
+
+For projects without any serverless configurations, test against live context exposed to the app layer with `--live`:
+
+```shell
+% API_HOST=localhoist scan-env --live -v
+Missing in live context
+
+JWT:
+	stories/pois.stories.js (has default)
+MAPBOX_ACCESS_TOKEN:
+	stories/pois.stories.js (has default)
+
+3 env vars found in 1 file
+API_HOST            stories/pois.stories.js
+JWT                 stories/pois.stories.js
+MAPBOX_ACCESS_TOKEN stories/pois.stories.js
 ```
 
 ### `<ignore scan-env>`

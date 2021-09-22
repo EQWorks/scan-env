@@ -167,16 +167,20 @@ function formatWarning({ missing, allVars }) {
 }
 
 function formatAll({ needed, verbose }) {
-  const counts = { vars: 0, files: 0 }
+  const uniques = { vars: [], files: [] }
   let maxWidth = 0
   const _needed = Object.entries(needed).reduce((acc, [k, fps]) => {
     acc[k] = Array.from(fps)
-    counts.vars += 1
-    counts.files += fps.size
+    uniques.vars.push(k)
+    uniques.files = uniques.files.concat(acc[k])
     maxWidth = Math.max(maxWidth, k.length)
     return acc
   }, {})
-  let s = `${chalk.blue(`${chalk.bold(counts.vars)} env vars found in ${chalk.bold(counts.files)} files`)}`
+  uniques.vars = new Set(uniques.vars)
+  uniques.files = new Set(uniques.files)
+  const sVars = `${chalk.bold(uniques.vars.size)} env var${uniques.vars.size > 1 ? 's' : ''}`
+  const sFiles = `${chalk.bold(uniques.files.size)} file${uniques.files.size > 1 ? 's' : ''}`
+  let s = chalk.blue(`${sVars} found in ${sFiles}`)
   if (verbose) {
     s += `\n`
     Object.entries(_needed).forEach(([k, fps]) => {
