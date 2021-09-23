@@ -207,12 +207,24 @@ function buildMissing({ needed, available }) {
   return missing
 }
 
+function buildUnused({ needed, available }) {
+  const neededSet = new Set(Object.keys(needed).reduce((acc, curr) => {
+    acc.push(curr)
+    return acc
+  }, []))
+  return new Set([...available].filter((v) => !neededSet.has(v)))
+}
+
 function output({ serverless, live, allVars, strict, verbose }) {
   const needed = buildNeeded(allVars)
   let available = new Set()
   if (serverless) {
     const yml = yaml.load(readFileSync(serverless), 'utf8')
     available = new Set(seekSLSEnvs(yml))
+    const unused = buildUnused({ needed, available })
+    if (unused.size) {
+      console.log(chalk.yellow(`Unused from ${chalk.bold(serverless)}\n\n${[...unused].map((v) => chalk.bold(v)).join('\n')}\n`))
+    }
   } else if (live) {
     available = new Set(Object.keys(process.env))
   }
