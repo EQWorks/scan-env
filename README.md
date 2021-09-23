@@ -75,10 +75,10 @@ jobs:
 
 ### Live mode (since `v0.4.0`)
 
-For projects without any serverless configurations, test against live context exposed to the app layer with `--live`:
+For projects without any serverless configurations, `scan-env` would test against live context exposed to the app layer:
 
 ```shell
-% API_HOST=localhoist scan-env --live -v
+% API_HOST=localhoist scan-env -v
 Missing in live context
 
 JWT:
