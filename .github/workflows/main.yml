@@ -114,7 +114,7 @@ jobs:
       - uses: actions/setup-node@v1
         with:
           node-version: 14.x
-      - run: npm i
+
       - name: Create tag
         if: ${{ success() }}
         run: npx @eqworks/release tag --github -v
