@@ -27,20 +27,20 @@ function detectSLSConfig(argv) {
 
 const NODE_REGEX = [
   // env['key'] or env.prop with `||` default support
-  /env(\[["|'](?<key>\w*)["|']\]|\.(?<prop>\w*))(?<def>\s*\|\|)?/g,
+  new RegExp(/env(\[["|'](?<key>\w*)["|']\]|\.(?<prop>\w*))(?<def>\s*\|\|)?/g),
   // destructuring such as { dict } = process.env
-  /{(?<dict>(?:[^}]{1})*)}\s*=\s*process.env/g, // TODO: this regex chokes on string with chalk usage
+  new RegExp(/{(?<dict>(?:[^}]{1})*)}\s*=\s*process.env/g), // TODO: this regex chokes on string with chalk usage
 ]
 
 function jsParser(text) {
   if (text.startsWith('//') || text.startsWith('/*')) {
     return { vars: [] }
   }
+  const vars = new Set()
+  const defaults = new Set()
   for (const regex of NODE_REGEX) {
     const matches = text.matchAll(regex)
     for (const match of matches) {
-      const vars = new Set()
-      const defaults = new Set()
       const { key, prop, def, dict } = match.groups
       if (dict) { // destructuring case
         dict.split(',').map((v) => v.trim()).filter((v) => v).forEach((v) => {
@@ -57,13 +57,12 @@ function jsParser(text) {
           defaults.add(key || prop)
         }
       }
-      return {
-        vars: Array.from(vars),
-        defaults: Array.from(defaults),
-      }
     }
   }
-  return { vars: [] }
+  return {
+    vars: Array.from(vars),
+    defaults: Array.from(defaults),
+  }
 }
 
 // handles environ.get, getenv, getenvb, with default/fallback support (not through `or`)
@@ -73,21 +72,20 @@ function pyParser(text) {
   if (text.startsWith('#')) {
     return { vars: [] }
   }
+  const vars = new Set()
+  const defaults = new Set()
   const matches = text.matchAll(PYTHON_REGEX)
   for (const match of matches) {
-    const vars = new Set()
-    const defaults = new Set()
     const { env, fallback } = match.groups
     vars.add(env)
     if (fallback) {
       defaults.add(env)
     }
-    return {
-      vars: Array.from(vars),
-      defaults: Array.from(defaults),
-    }
   }
-  return { vars: [] }
+  return {
+    vars: Array.from(vars),
+    defaults: Array.from(defaults),
+  }
 }
 
 const EXTS = {
@@ -209,12 +207,24 @@ function buildMissing({ needed, available }) {
   return missing
 }
 
+function buildUnused({ needed, available }) {
+  const neededSet = new Set(Object.keys(needed).reduce((acc, curr) => {
+    acc.push(curr)
+    return acc
+  }, []))
+  return new Set([...available].filter((v) => !neededSet.has(v)))
+}
+
 function output({ serverless, live, allVars, strict, verbose }) {
   const needed = buildNeeded(allVars)
   let available = new Set()
   if (serverless) {
     const yml = yaml.load(readFileSync(serverless), 'utf8')
     available = new Set(seekSLSEnvs(yml))
+    const unused = buildUnused({ needed, available })
+    if (unused.size) {
+      console.log(chalk.yellow(`Unused from ${chalk.bold(serverless)}\n\n${[...unused].map((v) => chalk.bold(v)).join('\n')}\n`))
+    }
   } else if (live) {
     available = new Set(Object.keys(process.env))
   }
