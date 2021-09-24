@@ -11,7 +11,7 @@ Utility to scan environment variable usage in a git repository. If a serverless 
 You can also install it and invoke the CLI without the scope:
 
 ```shell
-% npm i @eqworks/scan-env # or yarn add @eqworks/scan-env
+% npm i @eqworks/scan-env # or yarn global add @eqworks/scan-env
 % scan-env --help
 ...
 ...
