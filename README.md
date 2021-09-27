@@ -73,7 +73,7 @@ jobs:
       - run: npx @eqworks/scan-env --strict
 ```
 
-### Live mode (since `v0.4.0`)
+### Live mode (since `v0.4.0` through `--live`, auto-enabled since `v0.5.0`)
 
 For projects without any serverless configurations, `scan-env` would test against live context exposed to the app layer:
 
