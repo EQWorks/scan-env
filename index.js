@@ -215,9 +215,9 @@ function buildUnused({ needed, available }) {
   return new Set([...available].filter((v) => !neededSet.has(v)))
 }
 
-function output({ serverless, live, allVars, strict, verbose }) {
+function output({ serverless, allVars, strict, verbose }) {
   const needed = buildNeeded(allVars)
-  let available = new Set()
+  let available = new Set(Object.keys(process.env))
   if (serverless) {
     const yml = yaml.load(readFileSync(serverless), 'utf8')
     available = new Set(seekSLSEnvs(yml))
@@ -225,8 +225,6 @@ function output({ serverless, live, allVars, strict, verbose }) {
     if (unused.size) {
       console.log(chalk.yellow(`Unused from ${chalk.bold(serverless)}\n\n${[...unused].map((v) => chalk.bold(v)).join('\n')}\n`))
     }
-  } else if (live) {
-    available = new Set(Object.keys(process.env))
   }
   const missing = buildMissing({ needed, available })
   if (Object.keys(missing).length) {
@@ -255,11 +253,6 @@ if (require.main === module) {
         type: 'string',
         alias: 'sls',
         describe: 'Specify a serverless configuration YAML file; otherwise auto detect',
-      },
-      live: {
-        type: 'boolean',
-        alias: 'l',
-        describe: 'Perform "live" test against the available env vars exposed to the app layer. Ignored when a serverless config is found',
       },
       strict: {
         type: 'boolean',
